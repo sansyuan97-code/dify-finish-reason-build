@@ -1,0 +1,62 @@
+name: Verify existing B04 candidate only
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: One isolated runtime verification; no build or deployment
+        required: true
+        type: string
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: b04-isolated-runtime
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'sansyuan97-code/dify-finish-reason-build' && github.event.repository.private == false && inputs.confirmation == 'VERIFY-B04-ONCE'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Fetch and verify this revision's runtime script only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          mkdir -p scripts
+          curl --fail --location --proto '=https' --max-time 60 \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/scripts/runtime_smoke.py" \
+            -o scripts/runtime_smoke.py
+          printf '%s  %s\n' '2d596efe626c88d1e100db9008e3e93f5a1b0664d64fc15019fc656fd8075907' 'scripts/runtime_smoke.py' | sha256sum --check --strict
+          python3 scripts/runtime_smoke.py --check
+      - name: Pull exact private digest and check both targets sequentially
+        shell: bash
+        env:
+          ACA_RUNTIME_APPROVAL: ${{ inputs.confirmation }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/runtime_smoke.py --execute
+      - name: Final cleanup of only this run's verification containers and credentials
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+          for target in next vinext; do
+            name="aca-runtime-${GITHUB_RUN_ID}-${target}"
+            if [ -n "$(docker ps -a --filter "name=^/${name}$" --format '{{.Names}}')" ]; then
+              docker rm --force "$name"
+            fi
+            test -z "$(docker ps -a --filter "name=^/${name}$" --format '{{.Names}}')"
+          done
+          python3 - <<'PY'
+          import os, shutil
+          from pathlib import Path
+          rid = os.environ['GITHUB_RUN_ID']
+          assert rid.isdecimal()
+          root = Path(os.environ['RUNNER_TEMP']).resolve()
+          target = root / ('aca-runtime-auth-' + rid)
+          assert target.parent == root and target != root and not target.is_symlink()
+          if target.exists(): shutil.rmtree(target)
+          assert not target.exists()
+          print('Final cleanup verified; no build or deployment performed.')
+          PY
