@@ -37,7 +37,7 @@ def execute(root):
     rid=os.environ['GITHUB_RUN_ID'];assert rid.isdecimal()
     mem=dict(line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())
     available=int(mem['MemAvailable'].split()[0])*1024
-    assert available>=12*GIB,'need at least 12 GiB currently available for this candidate plan'
+    assert available>=13*GIB,'need at least 13 GiB currently available for this candidate plan'
     assert shutil.disk_usage(root).free>=11*GIB,'need at least 11 GiB free disk to start; requirement is a proposed stop gate, not a measured minimum'
     context=root/'build-source';context.mkdir(exist_ok=False)
     with tarfile.open(root/'source-context.tar.xz','r:xz') as z:z.extractall(context,filter='data')
@@ -56,17 +56,38 @@ def execute(root):
     config.write_text('[worker.oci]\n  max-parallelism = 1\n')
     builder='aca-cloud-'+rid;image='aca-finish-reason:gh-'+rid
     command(['docker','buildx','create','--name',builder,'--driver','docker-container',
-             '--driver-opt','image='+BUILDKIT,'--driver-opt','memory=10g',
-             '--driver-opt','memory-swap=10g','--driver-opt','cpu-period=100000',
-             '--driver-opt','cpu-quota=300000','--buildkitd-config',str(config)])
+             '--driver-opt','image='+BUILDKIT,'--driver-opt','memory=12g',
+             '--driver-opt','memory-swap=12g','--driver-opt','cpu-period=100000',
+             '--driver-opt','cpu-quota=200000','--buildkitd-config',str(config)])
     args=['docker','buildx','build','--builder',builder,'--platform','linux/amd64',
           '--progress','plain','--provenance=false','--load','--tag',image,
           '--build-context','node:24.20.0-alpine='+NODE,
           '--build-arg','COMMIT_SHA='+COMMIT,'--file',str(context/'web/Dockerfile'),str(context)]
-    started=time.monotonic();reason=None
+    print(json.dumps({'resource_plan': {'builder_memory_gib':12,'builder_cpu_limit':2,
+          'swap_in_builder':False,'min_available_memory_gib':13,'build_seconds_limit':3600},
+          'available_memory_start_bytes':available,'free_disk_start_bytes':shutil.disk_usage(root).free}),flush=True)
+    def memory_sample(stage):
+        sample={'resource_sample':stage,'elapsed_seconds':round(time.monotonic()-started,1)}
+        try:
+            ids=subprocess.check_output(['docker','ps','-aq','--filter',
+                'name=^/buildx_buildkit_'+builder+'0$'],text=True,timeout=5).split()
+            if len(ids)!=1:
+                sample['available']=False
+            else:
+                command_text='for f in memory.current memory.peak memory.max memory.events; do if [ -r /sys/fs/cgroup/$f ]; then echo "$f"; cat /sys/fs/cgroup/$f; fi; done'
+                probe=subprocess.run(['docker','exec',ids[0],'sh','-c',command_text],text=True,capture_output=True,timeout=5)
+                sample.update(cgroup_probe_exit=probe.returncode,cgroup_memory=probe.stdout[:4096])
+                state=subprocess.run(['docker','inspect','--format','{{json .State}}',ids[0]],text=True,capture_output=True,timeout=5)
+                sample['container_state']=state.stdout[:4096]
+        except (OSError,subprocess.SubprocessError) as error:
+            sample.update(available=False,error_type=type(error).__name__)
+        print(json.dumps(sample),flush=True)
+    started=time.monotonic();reason=None;next_sample=started
     try:
         process=subprocess.Popen(args)
         while process.poll() is None:
+            if time.monotonic()>=next_sample:
+                memory_sample('running');next_sample=time.monotonic()+30
             if time.monotonic()-started>3600:reason='3600 second build time limit'
             elif shutil.disk_usage(root).free<2*GIB:reason='free disk below 2 GiB'
             if reason:
@@ -75,17 +96,19 @@ def execute(root):
                 except subprocess.TimeoutExpired:process.kill();process.wait()
                 raise RuntimeError(reason)
             time.sleep(5)
+        memory_sample('after_build_process')
         assert process.returncode==0,'build command failed: '+str(process.returncode)
         image_id=subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',image],text=True).strip()
         result={'source_commit':COMMIT,'source_sha256':SOURCE_SHA,'run_id':rid,
                 'image':image,'image_id':image_id,'full_build_passed':True,
                 'project_typecheck_passed':False,'candidate_runtime_verified':False,
                 'deployed':False,'real14_acceptance_passed':False,
-                'builder_memory_limit_gib':10,'available_memory_start_bytes':available}
+                'builder_memory_limit_gib':12,'available_memory_start_bytes':available}
         (root/'build-result.json').write_text(json.dumps(result,indent=2)+'\n')
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
             f.write('## Candidate build result\n```json\n'+json.dumps(result,indent=2)+'\n```\n')
     finally:
+        memory_sample('before_builder_cleanup')
         subprocess.run(['docker','buildx','rm','--force',builder],check=False)
 
 parser=argparse.ArgumentParser()
