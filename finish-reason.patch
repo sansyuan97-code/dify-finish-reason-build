@@ -1,0 +1,13 @@
+--- a/web/app/components/workflow/constants.ts
++++ b/web/app/components/workflow/constants.ts
+@@ -152,6 +152,10 @@
+     variable: 'usage',
+     type: VarType.object,
+   },
++  {
++    variable: 'finish_reason',
++    type: VarType.string,
++  },
+ ]
+ 
+ export const KNOWLEDGE_RETRIEVAL_OUTPUT_STRUCT: Var[] = [
