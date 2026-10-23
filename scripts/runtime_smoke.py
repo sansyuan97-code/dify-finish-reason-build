@@ -133,7 +133,7 @@ def validate_container(data):
 
 
 def validate_probe(target, probe):
-    # Next�ٷ���ڻ��д���̱��⣬����Ҫ��/proc/1/cmdline����server.js������
+    # Next官方入口会改写进程标题，不能要求/proc/1/cmdline保留server.js参数。
     require(probe['entrypoint_sha256'] == ENTRY_SHA, 'official entrypoint hash mismatch')
     require(probe['uid'] == 1001, 'unexpected runtime UID')
     require(probe['pid1_executable'] == probe['probe_executable'], 'PID 1 is not the image Node executable')
@@ -185,7 +185,7 @@ def execute():
                      '--env', 'EXPERIMENTAL_ENABLE_VINEXT=' + ('true' if target == 'vinext' else 'false'), IMAGE])
                 validate_container(state(name))
                 probe = json.loads(run(['docker', 'exec', name, 'node', '-e', PROBE], timeout=150))
-                info['probe'] = probe  # �ȱ���ԭʼ�ض������ݼ��ʧ��Ҳ���ܶ�ʧ֤�ݡ�
+                info['probe'] = probe  # 先保存原始回读；身份检查失败也不能丢失证据。
                 validate_probe(target, probe)
                 info['final_state'] = state(name)
                 validate_container(info['final_state'])
