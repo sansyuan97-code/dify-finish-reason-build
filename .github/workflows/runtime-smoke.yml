@@ -27,7 +27,7 @@ jobs:
           curl --fail --location --proto '=https' --max-time 60 \
             "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/scripts/runtime_smoke.py" \
             -o scripts/runtime_smoke.py
-          printf '%s  %s\n' '2d596efe626c88d1e100db9008e3e93f5a1b0664d64fc15019fc656fd8075907' 'scripts/runtime_smoke.py' | sha256sum --check --strict
+          printf '%s  %s\n' 'd3509852ffa1f19714e52859dd73717294c890a4e71663f98970bf679a279c1b' 'scripts/runtime_smoke.py' | sha256sum --check --strict
           python3 scripts/runtime_smoke.py --check
       - name: Pull exact private digest and check both targets sequentially
         shell: bash

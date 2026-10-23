@@ -73,6 +73,7 @@ function get(path, depth = 0) {
     script_path: asset, script_status: js.status, script_bytes: js.body.length,
     entrypoint_sha256: crypto.createHash('sha256').update(fs.readFileSync('/app/entrypoint.sh')).digest('hex'),
     pid1: fs.readFileSync('/proc/1/cmdline', 'utf8').replace(/\0/g, ' ').trim(),
+    pid1_executable: fs.readlinkSync('/proc/1/exe'), probe_executable: process.execPath,
     uid: process.getuid(), interfaces: Object.keys(net),
     browser_rendering_verified: false, editor_integration_verified: false
   }));
@@ -131,6 +132,15 @@ def validate_container(data):
     require(data['state']['Running'] and not data['state']['OOMKilled'] and data['state']['Restarting'] is False, 'runtime exited or restarted')
 
 
+def validate_probe(target, probe):
+    # Next�ٷ���ڻ��д���̱��⣬����Ҫ��/proc/1/cmdline����server.js������
+    require(probe['entrypoint_sha256'] == ENTRY_SHA, 'official entrypoint hash mismatch')
+    require(probe['uid'] == 1001, 'unexpected runtime UID')
+    require(probe['pid1_executable'] == probe['probe_executable'], 'PID 1 is not the image Node executable')
+    expected = {'next': 'next-server (v16.3.4)', 'vinext': 'node /app/targets/vinext/server.js'}
+    require(target in expected and probe['pid1'] == expected[target], 'unexpected target process identity')
+
+
 def execute():
     rid = execution_gate()  # Must fail before Docker or credential handling on a local machine.
     names = ['aca-runtime-' + rid + '-' + target for target in ('next', 'vinext')]
@@ -170,15 +180,13 @@ def execute():
                      '--cpus', '2', '--pids-limit', '256', '--cap-drop', 'ALL',
                      '--security-opt', 'no-new-privileges', '--log-opt', 'max-size=2m', '--log-opt', 'max-file=1',
                      '--env', 'HOSTNAME=127.0.0.1', '--env', 'PORT=3000', '--env', 'NEXT_TELEMETRY_DISABLED=1',
-                     '--env', 'CONSOLE_API_URL=http://127.0.0.1:9', '--env', 'APP_API_URL=http://127.0.0.1:9',
-                     '--env', 'MARKETPLACE_API_URL=http://127.0.0.1:9', '--env', 'MARKETPLACE_URL=http://127.0.0.1:9',
+                     '--env', 'CONSOLE_API_URL=http://127.0.0.1:5001', '--env', 'APP_API_URL=http://127.0.0.1:5001',
+                     '--env', 'MARKETPLACE_API_URL=http://127.0.0.1:5001', '--env', 'MARKETPLACE_URL=http://127.0.0.1:5001',
                      '--env', 'EXPERIMENTAL_ENABLE_VINEXT=' + ('true' if target == 'vinext' else 'false'), IMAGE])
                 validate_container(state(name))
                 probe = json.loads(run(['docker', 'exec', name, 'node', '-e', PROBE], timeout=150))
-                require(probe['entrypoint_sha256'] == ENTRY_SHA, 'official entrypoint hash mismatch')
-                expected_path = '/app/targets/' + ('next/web' if target == 'next' else 'vinext') + '/server.js'
-                require(expected_path in probe['pid1'] and probe['uid'] == 1001, 'unexpected server/user')
-                info['probe'] = probe
+                info['probe'] = probe  # �ȱ���ԭʼ�ض������ݼ��ʧ��Ҳ���ܶ�ʧ֤�ݡ�
+                validate_probe(target, probe)
                 info['final_state'] = state(name)
                 validate_container(info['final_state'])
                 info['passed'] = True
