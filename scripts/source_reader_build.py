@@ -43,7 +43,7 @@ def execute(root):
     context=root/'build-source';context.mkdir(exist_ok=False)
     with tarfile.open(root/'source-context.tar.xz','r:xz') as z:z.extractall(context,filter='data')
     patch=root/'source-reader.patch'
-    assert hashlib.sha256(patch.read_bytes()).hexdigest()=='d08767bafb8331508d2e411ac943faa4e6c733e3853603cf7bcbcdfa6b0976b3'
+    assert hashlib.sha256(patch.read_bytes()).hexdigest()=='78fbe80d2f64ac24fc4b1e0838efc2079d228ed8f4d14f0bc855b4397ef2d2a8'
     command(['git','apply','--check',str(patch)],cwd=context)
     command(['git','apply',str(patch)],cwd=context)
     # Formatting and package-owned checks run before producing a candidate image.
