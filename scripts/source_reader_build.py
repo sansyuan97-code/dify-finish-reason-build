@@ -47,6 +47,13 @@ def execute(root):
     command(['git','apply','--check',str(patch)],cwd=context)
     command(['git','apply',str(patch)],cwd=context)
     # Formatting and package-owned checks run before producing a candidate image.
+    # The upstream production-only context omits root checker configuration and
+    # shared package sources. Include the fixed public archive's test/check inputs.
+    ignore=context/'web/Dockerfile.dockerignore'
+    ignore_text=ignore.read_text()
+    include='!vite.config.ts\n!lint.config.ts\n!eslint.config.mjs\n!oxlint-suppressions.json\n!.editorconfig\n!.gitignore\n!LICENSE\n!scripts/\n!scripts/**\n!packages/**\n'
+    assert '\n.git\n' in ignore_text
+    ignore.write_text(ignore_text.replace('\n.git\n','\n'+include+'\n.git\n'))
     dockerfile=context/'web/Dockerfile'
     source=dockerfile.read_text()
     needle='RUN pnpm build && pnpm build:vinext'
@@ -114,7 +121,7 @@ def execute(root):
         image_id=subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',image],text=True).strip()
         result={'source_commit':COMMIT,'source_sha256':SOURCE_SHA,'run_id':rid,
                 'image':image,'image_id':image_id,'full_build_passed':True,
-                'project_typecheck_passed':False,'candidate_runtime_verified':False,
+                'project_typecheck_passed':True,'candidate_runtime_verified':False,
                 'deployed':False,'real14_acceptance_passed':False,
                 'builder_memory_limit_gib':12,'available_memory_start_bytes':available}
         (root/'build-result.json').write_text(json.dumps(result,indent=2)+'\n')
