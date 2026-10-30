@@ -52,7 +52,7 @@ def execute(root):
     needle='RUN pnpm build && pnpm build:vinext'
     assert needle in source
     files='web/app/components/workflow/run/output-panel.tsx web/app/components/workflow/run/result-panel.tsx web/app/components/workflow/run/__tests__/output-panel.spec.tsx web/app/components/workflow/run/__tests__/result-panel.spec.tsx'
-    checks='RUN cd /app && pnpm exec vp fmt '+files+' && pnpm exec vp run -w check\nRUN pnpm exec vp test run --project unit app/components/workflow/run/__tests__/output-panel.spec.tsx app/components/workflow/run/__tests__/result-panel.spec.tsx\n'
+    checks='RUN cd /app && node --input-type=module -e '+'\'import { resolveConfig } from \'"\'"\'vite-plus\'"\'"\'; import fs from \'"\'"\'node:fs\'"\'"\'; const c=await resolveConfig({configFile:\'"\'"\'/app/vite.config.ts\'"\'"\'},\'"\'"\'build\'"\'"\'); console.log(JSON.stringify({cwd:process.cwd(),configFile:c.configFile,fmt:!!c.fmt,lint:!!c.lint,types:c.lint?.options,workspace:fs.existsSync(\'"\'"\'/app/pnpm-workspace.yaml\'"\'"\')})); if(!c.fmt||!c.lint) process.exit(1)\''+'\nRUN cd /app && pnpm exec vp fmt --config /app/vite.config.ts '+files+'\nRUN pnpm exec vp test run --project unit app/components/workflow/run/__tests__/output-panel.spec.tsx app/components/workflow/run/__tests__/result-panel.spec.tsx\nRUN cd /app && pnpm exec vp run -w check\n'
     dockerfile.write_text(source.replace(needle,checks+needle))
     build_temp=Path(os.environ['RUNNER_TEMP'])/('aca-build-'+rid)
     build_temp.mkdir(exist_ok=False)
