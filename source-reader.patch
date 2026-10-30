@@ -1,0 +1,145 @@
+--- a/web/app/components/workflow/run/output-panel.tsx
++++ b/web/app/components/workflow/run/output-panel.tsx
+@@ -17,16 +17,18 @@
+ }
+ 
+ const OutputPanel: FC<OutputPanelProps> = ({ isRunning, outputs, error, height }) => {
+-  const isTextOutput = useMemo(() => {
+-    if (!outputs || typeof outputs !== 'object') return false
++  const textOutput = useMemo(() => {
++    if (!outputs || typeof outputs !== 'object') return undefined
++    if (typeof outputs.analysis_report === 'string') return outputs.analysis_report
+     const keys = Object.keys(outputs)
+     const value = outputs[keys[0]!]
+-    return (
+-      keys.length === 1 &&
+-      (typeof value === 'string' ||
+-        (Array.isArray(value) && value.every((item) => typeof item === 'string')))
+-    )
++    if (keys.length !== 1) return undefined
++    if (typeof value === 'string') return value
++    if (Array.isArray(value) && value.every(item => typeof item === 'string'))
++      return value.join('\n')
++    return undefined
+   }, [outputs])
++  const isTextOutput = textOutput !== undefined
+ 
+   const fileList = useMemo(() => {
+     const fileList: any[] = []
+@@ -65,13 +67,7 @@
+       )}
+       {isTextOutput && (
+         <div className="px-4 py-2">
+-          <Markdown
+-            content={
+-              Array.isArray(outputs[Object.keys(outputs)[0]!])
+-                ? outputs[Object.keys(outputs)[0]!].join('\n')
+-                : outputs[Object.keys(outputs)[0]!] || ''
+-            }
+-          />
++          <Markdown content={textOutput ?? ''} />
+         </div>
+       )}
+       {fileList.length > 0 && (
+--- a/web/app/components/workflow/run/result-panel.tsx
++++ b/web/app/components/workflow/run/result-panel.tsx
+@@ -1,7 +1,9 @@
+ 'use client'
+ import type { FC } from 'react'
+ import type { AgentLogItemWithChildren, NodeTracing } from '@/types/workflow'
++import { useMemo } from 'react'
+ import { useTranslation } from 'react-i18next'
++import { Markdown } from '@/app/components/base/markdown'
+ import CodeEditor from '@/app/components/workflow/nodes/_base/components/editor/code-editor'
+ import ErrorHandleTip from '@/app/components/workflow/nodes/_base/components/error-handle/error-handle-tip'
+ import { CodeLanguage } from '@/app/components/workflow/nodes/code/types'
+@@ -74,6 +76,20 @@
+   handleShowAgentOrToolLog,
+ }) => {
+   const { t } = useTranslation()
++  const reportText = useMemo(() => {
++    if (!outputs || outputs_truncated) return undefined
++    let value = outputs
++    if (typeof value === 'string') {
++      try {
++        value = JSON.parse(value)
++      } catch {
++        return undefined
++      }
++    }
++    if (value && typeof value === 'object' && typeof value.combined_report === 'string')
++      return value.combined_report
++    return undefined
++  }, [outputs, outputs_truncated])
+   const isIterationNode = nodeInfo?.node_type === BlockEnum.Iteration && !!nodeInfo?.details?.length
+   const isLoopNode = nodeInfo?.node_type === BlockEnum.Loop && !!nodeInfo?.details?.length
+   const isRetryNode = hasRetryNode(nodeInfo?.node_type) && !!nodeInfo?.retryDetail?.length
+@@ -111,6 +127,11 @@
+           <AgentLogTrigger nodeInfo={nodeInfo} onShowAgentOrToolLog={handleShowAgentOrToolLog} />
+         )}
+       </div>
++      {reportText !== undefined && (
++        <div className="px-4 py-2">
++          <Markdown content={reportText} />
++        </div>
++      )}
+       <div className="flex flex-col gap-2 px-4 py-2">
+         <CodeEditor
+           readOnly
+--- a/web/app/components/workflow/run/__tests__/output-panel.spec.tsx
++++ b/web/app/components/workflow/run/__tests__/output-panel.spec.tsx
+@@ -167,3 +167,13 @@
+     expect(screen.queryByTestId('code-editor')).not.toBeInTheDocument()
+   })
+ })
++
++describe('report reading with diagnostic outputs', () => {
++  it('renders analysis_report as markdown without changing the output object', () => {
++    const outputs = Object.freeze({ analysis_report: 'Readable report', job_analysis_report: 'Draft', company_review: '', company_review_status: 'unknown', report_check_status: 'ready', report_check_summary: '', report_check_json: '{}' })
++    render(<OutputPanel outputs={outputs} height={200} />)
++    expect(screen.getByTestId('markdown')).toHaveTextContent('Readable report')
++    expect(screen.queryByTestId('code-editor')).not.toBeInTheDocument()
++    expect(Object.keys(outputs)).toHaveLength(7)
++  })
++})
+--- a/web/app/components/workflow/run/__tests__/result-panel.spec.tsx
++++ b/web/app/components/workflow/run/__tests__/result-panel.spec.tsx
+@@ -4,6 +4,10 @@
+ import { withSelectorKey } from '@/test/i18n-mock'
+ import { BlockEnum, NodeRunningStatus } from '../../types'
+ import ResultPanel from '../result-panel'
++
++vi.mock('@/app/components/base/markdown', () => ({
++  Markdown: ({ content }: { content: string }) => <article data-testid="report-preview">{content}</article>,
++}))
+ 
+ const mockUseTranslation = vi.hoisted(() => vi.fn())
+ const mockCodeEditor = vi.hoisted(() => vi.fn())
+@@ -364,3 +368,27 @@
+     expect(screen.getByText('COMMON.OUTPUT')).toBeInTheDocument()
+   })
+ })
++
++describe('report preview keeps diagnostic data accessible', () => {
++  beforeEach(() => {
++    vi.clearAllMocks()
++    mockUseTranslation.mockReturnValue({ t: withSelectorKey((key: string) => key) })
++  })
++
++  it('previews the combined report while preserving the JSON output', () => {
++    const outputs = { combined_report: 'Readable report', report_check_status: 'ready' }
++    render(<ResultPanel status="succeeded" outputs={outputs} />)
++    expect(screen.getByTestId('report-preview')).toHaveTextContent('Readable report')
++    expect(screen.getAllByTestId('code-editor').some(element => element.textContent?.includes('report_check_status'))).toBe(true)
++  })
++
++  it('does not preview a truncated output as a complete report', () => {
++    render(<ResultPanel status="succeeded" outputs={{ combined_report: 'Partial report' }} outputs_truncated />)
++    expect(screen.queryByTestId('report-preview')).not.toBeInTheDocument()
++  })
++
++  it('does not crash or invent a preview for incomplete JSON', () => {
++    render(<ResultPanel status="succeeded" outputs='{invalid' />)
++    expect(screen.queryByTestId('report-preview')).not.toBeInTheDocument()
++  })
++})
